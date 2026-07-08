@@ -1,0 +1,2 @@
+# Legder
+for trading journal

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Trading Journal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">L</div>
+      <div class="brand-name">Ledger</div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-view="dashboard"><span class="nav-ico">◆</span>Dashboard</button>
+      <button class="nav-item" data-view="calendar"><span class="nav-ico">▦</span>Calendar</button>
+      <button class="nav-item" data-view="trades"><span class="nav-ico">☰</span>Trades</button>
+      <button class="nav-item" data-view="analytics"><span class="nav-ico">◫</span>Analytics</button>
+      <button class="nav-item" data-view="journal"><span class="nav-ico">✎</span>Journal</button>
+      <button class="nav-item" data-view="import"><span class="nav-ico">⇅</span>Import / MT5</button>
+      <button class="nav-item" data-view="settings"><span class="nav-ico">⚙</span>Settings</button>
+    </nav>
+
+    <button class="btn-add-trade" id="openAddTrade">+ Add trade</button>
+
+    <div class="sidebar-foot">
+      <div class="foot-label">Net P&L (all time)</div>
+      <div class="foot-value" id="sidebarNetPnl">$0.00</div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <section class="view" id="view-dashboard">
+      <header class="view-head">
+        <div>
+          <h1>Dashboard</h1>
+          <p class="sub">Performance overview across every logged trade.</p>
+        </div>
+        <div class="range-select">
+          <select id="dashRange">
+            <option value="all">All time</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="ytd">Year to date</option>
+          </select>
+        </div>
+      </header>
+
+      <div class="card-grid" id="dashCards"></div>
+
+      <div class="panel-grid">
+        <div class="panel panel-wide">
+          <div class="panel-head"><h3>Equity curve</h3><span class="panel-note">Cumulative net P&L over time</span></div>
+          <canvas id="chartEquity" height="90"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Win / loss split</h3></div>
+          <canvas id="chartWinLoss" height="90"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Drawdown</h3><span class="panel-note">% from equity peak</span></div>
+          <canvas id="chartDrawdown" height="90"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Profit by pair</h3></div>
+          <canvas id="chartByPair" height="90"></canvas>
+        </div>
+      </div>
+
+      <div class="insight-row" id="insightRow"></div>
+    </section>
+
+    <!-- CALENDAR -->
+    <section class="view hidden" id="view-calendar">
+      <header class="view-head">
+        <div>
+          <h1>Calendar</h1>
+          <p class="sub">Daily P&L at a glance. Click a day to see its trades.</p>
+        </div>
+        <div class="cal-nav">
+          <button id="calPrev">‹</button>
+          <div id="calLabel">—</div>
+          <button id="calNext">›</button>
+        </div>
+      </header>
+
+      <div class="cal-summary" id="calSummary"></div>
+      <div class="cal-weekdays">
+        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+      </div>
+      <div class="cal-grid" id="calGrid"></div>
+    </section>
+
+    <!-- TRADES -->
+    <section class="view hidden" id="view-trades">
+      <header class="view-head">
+        <div>
+          <h1>Trades</h1>
+          <p class="sub">Every trade you've logged, newest first.</p>
+        </div>
+        <input type="text" id="tradeSearch" placeholder="Search pair, strategy, tag…" class="search-input">
+      </header>
+
+      <div class="table-wrap">
+        <table class="trade-table" id="tradeTable">
+          <thead>
+            <tr>
+              <th>Date</th><th>Pair</th><th>Dir</th><th>Entry</th><th>Exit</th>
+              <th>Lots</th><th>RR</th><th>Result</th><th>Session</th><th>Strategy</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tradeTableBody"></tbody>
+        </table>
+        <p class="empty-note hidden" id="tradesEmpty">No trades yet. Add one, or import your MT5 history.</p>
+      </div>
+    </section>
+
+    <!-- ANALYTICS -->
+    <section class="view hidden" id="view-analytics">
+      <header class="view-head">
+        <div>
+          <h1>Analytics</h1>
+          <p class="sub">Where your edge actually comes from.</p>
+        </div>
+      </header>
+
+      <div class="panel-grid">
+        <div class="panel">
+          <div class="panel-head"><h3>Day of week</h3></div>
+          <canvas id="chartDow" height="100"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Hour of day</h3><span class="panel-note">Entry time, local</span></div>
+          <canvas id="chartHour" height="100"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Session</h3></div>
+          <canvas id="chartSession" height="100"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Strategy</h3></div>
+          <canvas id="chartStrategy" height="100"></canvas>
+        </div>
+        <div class="panel panel-wide">
+          <div class="panel-head"><h3>Monthly growth</h3></div>
+          <canvas id="chartMonthly" height="80"></canvas>
+        </div>
+        <div class="panel panel-wide">
+          <div class="panel-head"><h3>Profit by pair (detail)</h3></div>
+          <canvas id="chartPairDetail" height="80"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- JOURNAL -->
+    <section class="view hidden" id="view-journal">
+      <header class="view-head">
+        <div>
+          <h1>Journal</h1>
+          <p class="sub">The psychology behind the numbers.</p>
+        </div>
+      </header>
+
+      <div class="panel-grid">
+        <div class="panel">
+          <div class="panel-head"><h3>Plan adherence</h3></div>
+          <canvas id="chartPlan" height="100"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Result by emotion</h3></div>
+          <canvas id="chartEmotion" height="100"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Result by confidence</h3></div>
+          <canvas id="chartConfidence" height="100"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Sleep vs result</h3></div>
+          <canvas id="chartSleep" height="100"></canvas>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <h3 class="section-label">Common mistakes logged</h3>
+        <div id="mistakeList" class="tag-list"></div>
+      </div>
+    </section>
+
+    <!-- IMPORT -->
+    <section class="view hidden" id="view-import">
+      <header class="view-head">
+        <div>
+          <h1>Import &amp; MT5 connection</h1>
+          <p class="sub">Bring your trade history in.</p>
+        </div>
+      </header>
+
+      <div class="panel notice">
+        <h3>About connecting MetaTrader 5</h3>
+        <p>A web page running in your browser can't reach into a desktop MT5 terminal directly — MT5 doesn't expose that connection to browsers, for the same reason no trading platform lets a random webpage read your account. There are two ways around that, both supported here:</p>
+        <ol>
+          <li><strong>Export &amp; import (works now):</strong> in MT5, go to the <em>Account History</em> tab, right-click → <em>Report</em> → save as a detailed CSV, then drop it below.</li>
+          <li><strong>Local bridge script (closest to live sync):</strong> a small Python script using MetaTrader5's official API can export your trade history straight from your terminal. Download it below, run it locally with <code>python mt5_export.py</code>, and import the JSON it produces. It never leaves your machine.</li>
+        </ol>
+        <button class="btn-secondary" id="downloadBridge">Download mt5_export.py</button>
+      </div>
+
+      <div class="panel">
+        <h3>Import a file</h3>
+        <p class="panel-note">Accepts MT5 CSV export or the JSON produced by the bridge script.</p>
+        <div class="dropzone" id="dropzone">
+          <p>Drop a .csv or .json file here, or</p>
+          <label class="btn-secondary file-btn">Choose file<input type="file" id="fileInput" accept=".csv,.json" hidden></label>
+        </div>
+        <div id="importSummary"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view hidden" id="view-settings">
+      <header class="view-head">
+        <div>
+          <h1>Settings</h1>
+          <p class="sub">Make it yours.</p>
+        </div>
+      </header>
+
+      <div class="panel">
+        <h3>Calendar &amp; chart colors</h3>
+        <div class="settings-row">
+          <label>Profit color</label>
+          <input type="color" id="colorWin">
+        </div>
+        <div class="settings-row">
+          <label>Loss color</label>
+          <input type="color" id="colorLoss">
+        </div>
+        <div class="settings-row">
+          <label>Breakeven color</label>
+          <input type="color" id="colorBE">
+        </div>
+        <div class="settings-row">
+          <label>Starting account balance</label>
+          <input type="number" id="startBalance" step="0.01">
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Data</h3>
+        <p class="panel-note">Everything is stored locally in this browser. Nothing is sent anywhere.</p>
+        <div class="settings-actions">
+          <button class="btn-secondary" id="exportData">Export all data (JSON)</button>
+          <button class="btn-danger" id="wipeData">Delete all trades</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ADD / EDIT TRADE MODAL -->
+<div class="modal-overlay hidden" id="tradeModalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">Add trade</h2>
+      <button class="modal-close" id="closeModal">×</button>
+    </div>
+
+    <form id="tradeForm">
+      <input type="hidden" id="tradeId">
+
+      <div class="form-section-label">Trade details</div>
+      <div class="form-grid">
+        <div class="field"><label>Pair / symbol</label><input type="text" id="fPair" placeholder="EURUSD" required></div>
+        <div class="field"><label>Direction</label>
+          <select id="fDirection"><option value="long">Long</option><option value="short">Short</option></select>
+        </div>
+        <div class="field"><label>Date</label><input type="date" id="fDate" required></div>
+        <div class="field"><label>Entry time</label><input type="time" id="fTimeIn"></div>
+        <div class="field"><label>Exit time</label><input type="time" id="fTimeOut"></div>
+        <div class="field"><label>Session</label>
+          <select id="fSession"><option>Asian</option><option>London</option><option>New York</option><option>London/NY overlap</option></select>
+        </div>
+        <div class="field"><label>Lot size</label><input type="number" step="0.01" id="fLots"></div>
+        <div class="field"><label>Entry price</label><input type="number" step="0.00001" id="fEntry"></div>
+        <div class="field"><label>Exit price</label><input type="number" step="0.00001" id="fExit"></div>
+        <div class="field"><label>Stop loss</label><input type="number" step="0.00001" id="fSL"></div>
+        <div class="field"><label>Take profit</label><input type="number" step="0.00001" id="fTP"></div>
+        <div class="field"><label>Result ($)</label><input type="number" step="0.01" id="fResult" required></div>
+        <div class="field"><label>Risk:Reward</label><input type="number" step="0.01" id="fRR"></div>
+        <div class="field"><label>Strategy / setup</label><input type="text" id="fStrategy" placeholder="Breakout, reversal…"></div>
+      </div>
+
+      <div class="form-section-label">Psychology &amp; process</div>
+      <div class="form-grid">
+        <div class="field"><label>Emotion before trade</label>
+          <select id="fEmotion"><option>Calm</option><option>Confident</option><option>Anxious</option><option>FOMO</option><option>Bored</option><option>Frustrated</option><option>Tired</option></select>
+        </div>
+        <div class="field"><label>Confidence (1–5)</label><input type="number" min="1" max="5" id="fConfidence"></div>
+        <div class="field"><label>Sleep (hours)</label><input type="number" step="0.5" id="fSleep"></div>
+        <div class="field"><label>Stress (1–5)</label><input type="number" min="1" max="5" id="fStress"></div>
+        <div class="field"><label>Followed plan?</label>
+          <select id="fFollowedPlan"><option value="yes">Yes</option><option value="no">No</option></select>
+        </div>
+        <div class="field"><label>Mistake (if any)</label><input type="text" id="fMistake" placeholder="Moved SL, early exit…"></div>
+        <div class="field field-wide"><label>Reason / notes</label><textarea id="fReason" rows="3" placeholder="Why you took this trade, what you saw…"></textarea></div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="deleteTradeBtn" style="display:none;">Delete trade</button>
+        <div class="modal-actions-right">
+          <button type="button" class="btn-secondary" id="cancelTrade">Cancel</button>
+          <button type="submit" class="btn-primary">Save trade</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- DAY DETAIL MODAL -->
+<div class="modal-overlay hidden" id="dayModalOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="dayModalTitle">—</h2>
+      <button class="modal-close" id="closeDayModal">×</button>
+    </div>
+    <div id="dayModalBody"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
