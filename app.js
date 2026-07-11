@@ -3,14 +3,17 @@
    All data lives in localStorage. Nothing leaves the browser.
    ========================================================= */
 
-const STORAGE_KEY = 'ledger_trades_v1';
-const SETTINGS_KEY = 'ledger_settings_v1';
+const ACCOUNTS_KEY = 'ledger_accounts_v1';
+const ACTIVE_KEY = 'ledger_active_account_v1';
+const LEGACY_TRADES_KEY = 'ledger_trades_v1';
+const LEGACY_SETTINGS_KEY = 'ledger_settings_v1';
 
 const DEFAULT_SETTINGS = {
   colorWin: '#2FBF8F',
   colorLoss: '#E5484D',
   colorBE: '#6C7A8C',
-  startBalance: 10000
+  startBalance: 10000,
+  monthlyTarget: 0
 };
 
 const CLOUD_ENABLED = typeof SUPABASE_URL !== 'undefined'
@@ -19,20 +22,42 @@ const sbClient = CLOUD_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPA
 
 let currentUser = null;
 
-/* ---- local cache (always used as fallback / instant load) ---- */
-function loadLocalTrades(){
-  try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : []; }
-  catch(e){ return []; }
+function newAccount(name){
+  return { id: 'acc_' + Math.random().toString(36).slice(2,9), name: name || 'Main', settings: {...DEFAULT_SETTINGS}, trades: [] };
 }
-function saveLocalTrades(t){ localStorage.setItem(STORAGE_KEY, JSON.stringify(t)); }
-function loadLocalSettings(){
-  try{ const raw = localStorage.getItem(SETTINGS_KEY); return raw ? {...DEFAULT_SETTINGS, ...JSON.parse(raw)} : {...DEFAULT_SETTINGS}; }
-  catch(e){ return {...DEFAULT_SETTINGS}; }
-}
-function saveLocalSettings(s){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
 
-let trades = loadLocalTrades();
-let settings = loadLocalSettings();
+/* ---- local cache (always used as fallback / instant load) ---- */
+function loadLocalAccounts(){
+  try{
+    const raw = localStorage.getItem(ACCOUNTS_KEY);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      if(parsed && Object.keys(parsed).length) return parsed;
+    }
+  }catch(e){}
+  // migrate legacy single-account storage if present
+  let legacyTrades = [], legacySettings = {...DEFAULT_SETTINGS};
+  try{ const rt = localStorage.getItem(LEGACY_TRADES_KEY); if(rt) legacyTrades = JSON.parse(rt); }catch(e){}
+  try{ const rs = localStorage.getItem(LEGACY_SETTINGS_KEY); if(rs) legacySettings = {...DEFAULT_SETTINGS, ...JSON.parse(rs)}; }catch(e){}
+  const acc = newAccount('Main');
+  acc.trades = legacyTrades;
+  acc.settings = legacySettings;
+  return { [acc.id]: acc };
+}
+function saveLocalAccounts(accs){ localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accs)); }
+function loadLocalActiveId(accs){
+  const stored = localStorage.getItem(ACTIVE_KEY);
+  if(stored && accs[stored]) return stored;
+  return Object.keys(accs)[0];
+}
+function saveLocalActiveId(id){ localStorage.setItem(ACTIVE_KEY, id); }
+
+let accounts = loadLocalAccounts();
+let activeAccountId = loadLocalActiveId(accounts);
+saveLocalAccounts(accounts); saveLocalActiveId(activeAccountId);
+
+let trades = accounts[activeAccountId].trades;
+let settings = {...DEFAULT_SETTINGS, ...accounts[activeAccountId].settings};
 let charts = {}; // canvas id -> Chart instance
 let calCursor = new Date(); // current month shown in calendar
 
@@ -45,21 +70,26 @@ function setSyncStatus(text, isErr){
 
 /* ---- cloud sync (fire-and-forget upsert; local cache is source of truth for instant UI) ---- */
 let syncTimer = null;
+function persistAll(){
+  accounts[activeAccountId].trades = trades;
+  accounts[activeAccountId].settings = settings;
+  saveLocalAccounts(accounts);
+  saveLocalActiveId(activeAccountId);
+  pushToCloud();
+}
 function pushToCloud(){
-  saveLocalTrades(trades);
-  saveLocalSettings(settings);
-  if(!CLOUD_ENABLED || !currentUser) return;
+  if(!CLOUD_ENABLED || !currentUser){ setSyncStatus('Local only'); return; }
   setSyncStatus('Saving…');
   clearTimeout(syncTimer);
   syncTimer = setTimeout(async ()=>{
     const {error} = await sbClient.from('journal_data').upsert({
-      user_id: currentUser.id, trades, settings, updated_at: new Date().toISOString()
+      user_id: currentUser.id, accounts, active_account_id: activeAccountId, updated_at: new Date().toISOString()
     });
     setSyncStatus(error ? 'Sync failed — saved locally' : 'Synced', !!error);
   }, 500);
 }
-function saveTrades(t){ trades = t; pushToCloud(); }
-function saveSettings(s){ settings = s; pushToCloud(); }
+function saveTrades(t){ trades = t; persistAll(); }
+function saveSettings(s){ settings = s; persistAll(); }
 
 async function pullFromCloud(){
   if(!CLOUD_ENABLED || !currentUser) return;
@@ -68,14 +98,71 @@ async function pullFromCloud(){
   if(error){ setSyncStatus('Could not load cloud data — showing local copy', true); return; }
   if(!data){
     // first login: seed the cloud row with whatever's in the local cache
-    await sbClient.from('journal_data').insert({ user_id: currentUser.id, trades, settings });
+    await sbClient.from('journal_data').insert({ user_id: currentUser.id, accounts, active_account_id: activeAccountId });
     setSyncStatus('Synced');
     return;
   }
-  trades = data.trades || [];
-  settings = {...DEFAULT_SETTINGS, ...(data.settings||{})};
-  saveLocalTrades(trades); saveLocalSettings(settings);
+  if(data.accounts && Object.keys(data.accounts).length){
+    accounts = data.accounts;
+    activeAccountId = (data.active_account_id && accounts[data.active_account_id]) ? data.active_account_id : Object.keys(accounts)[0];
+  } else if(data.trades || data.settings){
+    // migrate an older single-account cloud row into the new accounts structure
+    const acc = newAccount('Main');
+    acc.trades = data.trades || [];
+    acc.settings = {...DEFAULT_SETTINGS, ...(data.settings||{})};
+    accounts = { [acc.id]: acc };
+    activeAccountId = acc.id;
+  }
+  trades = accounts[activeAccountId].trades;
+  settings = {...DEFAULT_SETTINGS, ...accounts[activeAccountId].settings};
+  saveLocalAccounts(accounts); saveLocalActiveId(activeAccountId);
   setSyncStatus('Synced');
+}
+
+/* ---- account switching ---- */
+function switchAccount(id){
+  if(!accounts[id] || id === activeAccountId) return;
+  activeAccountId = id;
+  trades = accounts[id].trades;
+  settings = {...DEFAULT_SETTINGS, ...accounts[id].settings};
+  saveLocalActiveId(id);
+  renderAccountSwitcher();
+  refreshCurrentView();
+}
+function addAccountFlow(){
+  const name = prompt('Name this account (e.g. "Cent account", "FTMO Standard"):');
+  if(!name || !name.trim()) return;
+  const acc = newAccount(name.trim());
+  accounts[acc.id] = acc;
+  activeAccountId = acc.id;
+  trades = acc.trades;
+  settings = {...DEFAULT_SETTINGS, ...acc.settings};
+  persistAll();
+  renderAccountSwitcher();
+  refreshCurrentView();
+}
+function renameAccountFlow(){
+  const name = prompt('Rename this account:', accounts[activeAccountId].name);
+  if(!name || !name.trim()) return;
+  accounts[activeAccountId].name = name.trim();
+  persistAll();
+  renderAccountSwitcher();
+}
+function deleteAccountFlow(){
+  if(Object.keys(accounts).length <= 1){ alert('You need at least one account — create a new one before deleting this.'); return; }
+  if(!confirm(`Delete "${accounts[activeAccountId].name}" and all ${trades.length} of its trades? This cannot be undone.`)) return;
+  delete accounts[activeAccountId];
+  activeAccountId = Object.keys(accounts)[0];
+  trades = accounts[activeAccountId].trades;
+  settings = {...DEFAULT_SETTINGS, ...accounts[activeAccountId].settings};
+  persistAll();
+  renderAccountSwitcher();
+  refreshCurrentView();
+}
+function renderAccountSwitcher(){
+  const sel = document.getElementById('accountSelect');
+  if(!sel) return;
+  sel.innerHTML = Object.values(accounts).map(a=>`<option value="${a.id}" ${a.id===activeAccountId?'selected':''}>${a.name}</option>`).join('');
 }
 
 function uid(){ return 't_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
@@ -97,7 +184,7 @@ function fmtNum(n, d=2){
 /* =========================================================
    NAVIGATION
    ========================================================= */
-const views = ['dashboard','calendar','trades','analytics','journal','import','settings'];
+const views = ['dashboard','calendar','trades','analytics','journal','calculator','import','settings'];
 function showView(name){
   views.forEach(v=>{
     document.getElementById('view-'+v).classList.toggle('hidden', v!==name);
@@ -110,6 +197,7 @@ function showView(name){
   if(name==='trades') renderTradeTable();
   if(name==='analytics') renderAnalytics();
   if(name==='journal') renderJournal();
+  if(name==='calculator' && !document.getElementById('calcBalance').value) document.getElementById('calcBalance').value = settings.startBalance || '';
   if(name==='settings') renderSettingsView();
 }
 document.querySelectorAll('.nav-item').forEach(btn=>{
@@ -304,6 +392,7 @@ function renderDashboard(){
     statCard('Max loss streak', m.maxLossStreak),
   ];
   document.getElementById('dashCards').innerHTML = cards.join('');
+  renderGoalPanel();
 
   renderChartEquity(m);
   renderChartWinLoss(m);
@@ -321,6 +410,32 @@ function insightCard(label, val, sub){
   return `<div class="insight-card"><div class="stat-label">${label}</div><div class="stat-value">${val}</div><div class="stat-sub">${sub}</div></div>`;
 }
 document.getElementById('dashRange').addEventListener('change', renderDashboard);
+
+function renderGoalPanel(){
+  const now = new Date();
+  const monthTrades = trades.filter(t=>{
+    const d = new Date(t.date+'T00:00:00');
+    return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
+  });
+  const netThisMonth = monthTrades.reduce((s,t)=>s+(Number(t.result)||0), 0);
+  document.getElementById('goalMonthLabel').textContent = now.toLocaleString('default',{month:'long', year:'numeric'});
+
+  const target = Number(settings.monthlyTarget) || 0;
+  const body = document.getElementById('goalBody');
+  if(target <= 0){
+    body.innerHTML = `<p class="goal-empty">No target set yet. <button type="button" class="goal-link" id="goalSetLink">Set a monthly target</button> to track progress here.</p>`;
+    document.getElementById('goalSetLink').addEventListener('click', ()=>showView('settings'));
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, (netThisMonth/target)*100));
+  const barColor = netThisMonth >= target ? settings.colorWin : (netThisMonth < 0 ? settings.colorLoss : settings.colorWin);
+  body.innerHTML = `
+    <div class="goal-bar-track"><div class="goal-bar-fill" style="width:${pct}%; background:${barColor};"></div></div>
+    <div class="goal-meta">
+      <span>${fmtMoney(netThisMonth)} of ${fmtMoney(target)}</span>
+      <span>${fmtPct(pct)}${netThisMonth>=target ? ' — target hit 🎯' : ''}</span>
+    </div>`;
+}
 
 /* ---- charts (dashboard) ---- */
 function destroyChart(id){ if(charts[id]){ charts[id].destroy(); delete charts[id]; } }
@@ -964,13 +1079,15 @@ function renderSettingsView(){
   document.getElementById('colorLoss').value = settings.colorLoss;
   document.getElementById('colorBE').value = settings.colorBE;
   document.getElementById('startBalance').value = settings.startBalance;
+  document.getElementById('monthlyTarget').value = settings.monthlyTarget || '';
 }
-['colorWin','colorLoss','colorBE','startBalance'].forEach(id=>{
+['colorWin','colorLoss','colorBE','startBalance','monthlyTarget'].forEach(id=>{
   document.getElementById(id).addEventListener('change', ()=>{
     settings.colorWin = document.getElementById('colorWin').value;
     settings.colorLoss = document.getElementById('colorLoss').value;
     settings.colorBE = document.getElementById('colorBE').value;
     settings.startBalance = Number(document.getElementById('startBalance').value) || 0;
+    settings.monthlyTarget = Number(document.getElementById('monthlyTarget').value) || 0;
     saveSettings(settings);
     refreshCurrentView();
   });
@@ -1001,6 +1118,76 @@ document.getElementById('convertCentsBtn').addEventListener('click', ()=>{
 });
 
 /* =========================================================
+   ACCOUNT SWITCHER
+   ========================================================= */
+document.getElementById('accountSelect').addEventListener('change', (e)=> switchAccount(e.target.value));
+document.getElementById('addAccountBtn').addEventListener('click', addAccountFlow);
+document.getElementById('renameAccountBtn').addEventListener('click', renameAccountFlow);
+document.getElementById('deleteAccountBtn').addEventListener('click', deleteAccountFlow);
+
+/* =========================================================
+   POSITION SIZE CALCULATOR
+   ========================================================= */
+let calcMode = 'forex';
+let lastCalcResult = null;
+
+document.querySelectorAll('.calc-mode-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    calcMode = btn.dataset.mode;
+    document.querySelectorAll('.calc-mode-btn').forEach(b=>b.classList.toggle('active', b===btn));
+    document.querySelectorAll('.calc-forex-field').forEach(f=>f.classList.toggle('hidden', calcMode!=='forex'));
+    document.querySelectorAll('.calc-direct-field').forEach(f=>f.classList.toggle('hidden', calcMode!=='direct'));
+    document.getElementById('calcSizeLabel').textContent = calcMode==='forex' ? 'Position size (lots)' : 'Position size (units)';
+    document.getElementById('calcResult').classList.add('hidden');
+  });
+});
+
+document.getElementById('calcRunBtn').addEventListener('click', ()=>{
+  const balance = Number(document.getElementById('calcBalance').value) || 0;
+  const riskPct = Number(document.getElementById('calcRiskPct').value) || 0;
+  const riskAmount = balance * (riskPct/100);
+  let size = 0;
+
+  if(calcMode === 'forex'){
+    const pips = Number(document.getElementById('calcStopPips').value) || 0;
+    const pipValue = Number(document.getElementById('calcPipValue').value) || 0;
+    if(pips>0 && pipValue>0) size = riskAmount / (pips * pipValue);
+  } else {
+    const entry = Number(document.getElementById('calcEntry').value) || 0;
+    const stop = Number(document.getElementById('calcStopPrice').value) || 0;
+    const dist = Math.abs(entry - stop);
+    if(dist>0) size = riskAmount / dist;
+  }
+
+  if(!balance || !riskPct || !size){
+    alert('Fill in all the fields — need a balance, risk %, and a valid stop distance to calculate.');
+    return;
+  }
+
+  lastCalcResult = {
+    mode: calcMode, riskAmount,
+    size: calcMode==='forex' ? Number(size.toFixed(2)) : Number(size.toFixed(4)),
+    entry: calcMode==='direct' ? Number(document.getElementById('calcEntry').value)||'' : '',
+    stop: calcMode==='direct' ? Number(document.getElementById('calcStopPrice').value)||'' : ''
+  };
+  document.getElementById('calcRiskAmount').textContent = fmtMoney(riskAmount);
+  document.getElementById('calcSizeValue').textContent = lastCalcResult.size;
+  document.getElementById('calcResult').classList.remove('hidden');
+});
+
+document.getElementById('calcUseBtn').addEventListener('click', ()=>{
+  if(!lastCalcResult) return;
+  openTradeModal(null);
+  if(lastCalcResult.mode === 'forex'){
+    document.getElementById('fLots').value = lastCalcResult.size;
+  } else {
+    document.getElementById('fLots').value = lastCalcResult.size;
+    if(lastCalcResult.entry) document.getElementById('fEntry').value = lastCalcResult.entry;
+    if(lastCalcResult.stop) document.getElementById('fSL').value = lastCalcResult.stop;
+  }
+});
+
+/* =========================================================
    AUTH
    ========================================================= */
 let authMode = 'login'; // 'login' | 'signup'
@@ -1008,6 +1195,7 @@ let authMode = 'login'; // 'login' | 'signup'
 function showApp(){
   document.getElementById('authOverlay').classList.add('hidden');
   document.getElementById('appRoot').classList.remove('hidden');
+  renderAccountSwitcher();
   showView('dashboard');
 }
 function showAuth(){
@@ -1080,6 +1268,7 @@ async function init(){
     document.getElementById('appRoot').classList.remove('hidden');
     document.getElementById('signOutBtn').classList.add('hidden');
     setSyncStatus('Local only — add config.js keys to enable sync');
+    renderAccountSwitcher();
     showView('dashboard');
     return;
   }
