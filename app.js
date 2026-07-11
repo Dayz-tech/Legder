@@ -990,6 +990,15 @@ document.getElementById('wipeData').addEventListener('click', ()=>{
     refreshCurrentView();
   }
 });
+document.getElementById('convertCentsBtn').addEventListener('click', ()=>{
+  if(!trades.length){ alert('No trades to convert yet.'); return; }
+  if(confirm(`Divide the result on all ${trades.length} trade(s) by 100? Only do this once — running it twice will over-divide your data.`)){
+    trades = trades.map(t=>({...t, result: (Number(t.result)||0) / 100}));
+    saveTrades(trades);
+    refreshCurrentView();
+    alert('Done — every trade\'s result has been divided by 100.');
+  }
+});
 
 /* =========================================================
    AUTH

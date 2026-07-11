@@ -302,6 +302,14 @@
           <button class="btn-danger" id="wipeData">Delete all trades</button>
         </div>
       </div>
+
+      <div class="panel">
+        <h3>Fix Cent-account values</h3>
+        <p class="panel-note">If you already imported trades before checking "Cent account" on the Import screen, your results and entry/exit prices are still 100x too large. Use this once to divide every existing trade's $ result by 100.</p>
+        <div class="settings-actions">
+          <button class="btn-secondary" id="convertCentsBtn">Divide all existing results by 100</button>
+        </div>
+      </div>
     </section>
 
   </main>
