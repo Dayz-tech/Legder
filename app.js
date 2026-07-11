@@ -737,13 +737,38 @@ async function extractPdfLines(arrayBuffer){
   return lines;
 }
 function parsePdfTradeLines(lines){
+  const results = [];
+
+  // Tier 1: strict match against the standard MT5 "Closed Transactions" row layout —
+  // posID, type, openDate, openTime, symbol, openPrice, openVol, closeDate, closeTime,
+  // closePrice, closeVol, S/L, T/P, commission, taxes, swap, profit.
+  // This is the format used by most brokers' MT5 statement export (Exness, IC Markets, XM, etc).
+  const strictRe = /^\d+\s+(buy|sell)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+(\S+)\s+([\d.]+)\s+([\d.]+)\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)$/i;
+
+  lines.forEach(line=>{
+    if(/cancelled/i.test(line)) return; // pending orders that never filled — no P/L
+    const m = line.match(strictRe);
+    if(!m) return;
+    const [, type, openDate, openTime, symbol, openPrice, openVol, closeDate, closeTime, closePrice, , sl, tp, commission, taxes, swap, profit] = m;
+    const totalCost = (parseFloat(commission)||0) + (parseFloat(taxes)||0) + (parseFloat(swap)||0);
+    results.push({
+      date: closeDate, timeIn: openTime.slice(0,5), timeOut: closeTime.slice(0,5),
+      pair: symbol.replace(/c$/i,''), // strip cent-account "c" suffix (e.g. AUDUSDc -> AUDUSD)
+      direction: type.toLowerCase()==='sell' ? 'short' : 'long',
+      lots: openVol, entry: openPrice, exit: closePrice, sl, tp,
+      result: (parseFloat(profit)||0) + totalCost
+    });
+  });
+  if(results.length) return results;
+
+  // Tier 2: loose fallback for statements that don't match the exact layout above —
+  // just look for a date, a time, buy/sell, a symbol-looking token, and use the last number as profit.
   const dateRe = /(\d{4})[.\-\/](\d{2})[.\-\/](\d{2})/;
   const timeRe = /(\d{2}):(\d{2})(?::\d{2})?/;
   const dirRe = /\b(buy|sell)\b/i;
-  // MT5 symbols are usually 5-8 uppercase letters, sometimes with digits/suffixes
   const symRe = /\b([A-Z]{5,8}[A-Z0-9.]{0,4})\b/;
-  const found = [];
   lines.forEach(line=>{
+    if(/cancelled/i.test(line)) return;
     if(!dirRe.test(line)) return;
     const dm = line.match(dateRe);
     if(!dm) return;
@@ -753,7 +778,7 @@ function parsePdfTradeLines(lines){
     const nums = (line.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
     if(nums.length < 3) return;
     const profit = nums[nums.length-1];
-    found.push({
+    results.push({
       date: `${dm[1]}-${dm[2]}-${dm[3]}`,
       timeIn: tm ? `${tm[1]}:${tm[2]}` : '',
       pair: sm[1],
@@ -761,7 +786,7 @@ function parsePdfTradeLines(lines){
       result: isNaN(profit) ? 0 : profit
     });
   });
-  return found;
+  return results;
 }
 async function importPDF(arrayBuffer){
   let lines;
@@ -773,8 +798,9 @@ async function importPDF(arrayBuffer){
   }
   rows.forEach(r=>{
     trades.push({
-      id: uid(), pair: r.pair, direction: r.direction, date: r.date, timeIn: r.timeIn, timeOut:'',
-      session:'', lots:'', entry:'', exit:'', sl:'', tp:'', result: r.result, rr:'', strategy:'',
+      id: uid(), pair: r.pair, direction: r.direction, date: r.date, timeIn: r.timeIn||'', timeOut: r.timeOut||'',
+      session:'', lots: r.lots||'', entry: r.entry||'', exit: r.exit||'', sl: r.sl||'', tp: r.tp||'',
+      result: r.result, rr:'', strategy:'',
       emotion:'', confidence:'', sleep:'', stress:'', followedPlan:'', mistake:'', reason:'Imported from MT5 PDF statement'
     });
   });
