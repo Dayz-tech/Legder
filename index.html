@@ -7,10 +7,42 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
 </head>
 <body>
 
-<div class="app">
+<!-- AUTH SCREEN -->
+<div class="auth-overlay" id="authOverlay">
+  <div class="auth-box">
+    <div class="brand" style="justify-content:center; margin-bottom:22px;">
+      <div class="brand-mark">L</div>
+      <div class="brand-name">Ledger</div>
+    </div>
+    <h2 id="authTitle" style="text-align:center; margin-bottom:6px;">Log in</h2>
+    <p class="sub" style="text-align:center; margin-bottom:20px;">Your trades, synced to any device.</p>
+
+    <form id="authForm">
+      <div class="field" style="margin-bottom:12px;">
+        <label>Email</label>
+        <input type="email" id="authEmail" required autocomplete="email">
+      </div>
+      <div class="field" style="margin-bottom:16px;">
+        <label>Password</label>
+        <input type="password" id="authPassword" required autocomplete="current-password" minlength="6">
+      </div>
+      <button type="submit" class="btn-primary" style="width:100%;" id="authSubmit">Log in</button>
+    </form>
+    <p class="auth-error hidden" id="authError"></p>
+    <p class="auth-switch">
+      <span id="authSwitchText">Don't have an account?</span>
+      <button type="button" id="authSwitchBtn">Sign up</button>
+    </p>
+    <p class="auth-note">Stored securely via Supabase. Each account's data is private to that account.</p>
+  </div>
+</div>
+
+<div class="app hidden" id="appRoot">
 
   <!-- SIDEBAR -->
   <aside class="sidebar">
@@ -34,6 +66,8 @@
     <div class="sidebar-foot">
       <div class="foot-label">Net P&L (all time)</div>
       <div class="foot-value" id="sidebarNetPnl">$0.00</div>
+      <div class="sync-status" id="syncStatus">Synced</div>
+      <button class="btn-signout" id="signOutBtn">Sign out</button>
     </div>
   </aside>
 

@@ -13,29 +13,70 @@ const DEFAULT_SETTINGS = {
   startBalance: 10000
 };
 
-function loadTrades(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  }catch(e){ return []; }
-}
-function saveTrades(trades){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(trades));
-}
-function loadSettings(){
-  try{
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    return raw ? {...DEFAULT_SETTINGS, ...JSON.parse(raw)} : {...DEFAULT_SETTINGS};
-  }catch(e){ return {...DEFAULT_SETTINGS}; }
-}
-function saveSettings(s){
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-}
+const CLOUD_ENABLED = typeof SUPABASE_URL !== 'undefined'
+  && SUPABASE_URL && SUPABASE_URL !== 'YOUR_SUPABASE_PROJECT_URL';
+const sbClient = CLOUD_ENABLED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-let trades = loadTrades();
-let settings = loadSettings();
+let currentUser = null;
+
+/* ---- local cache (always used as fallback / instant load) ---- */
+function loadLocalTrades(){
+  try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : []; }
+  catch(e){ return []; }
+}
+function saveLocalTrades(t){ localStorage.setItem(STORAGE_KEY, JSON.stringify(t)); }
+function loadLocalSettings(){
+  try{ const raw = localStorage.getItem(SETTINGS_KEY); return raw ? {...DEFAULT_SETTINGS, ...JSON.parse(raw)} : {...DEFAULT_SETTINGS}; }
+  catch(e){ return {...DEFAULT_SETTINGS}; }
+}
+function saveLocalSettings(s){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+
+let trades = loadLocalTrades();
+let settings = loadLocalSettings();
 let charts = {}; // canvas id -> Chart instance
 let calCursor = new Date(); // current month shown in calendar
+
+function setSyncStatus(text, isErr){
+  const el = document.getElementById('syncStatus');
+  if(!el) return;
+  el.textContent = text;
+  el.classList.toggle('err', !!isErr);
+}
+
+/* ---- cloud sync (fire-and-forget upsert; local cache is source of truth for instant UI) ---- */
+let syncTimer = null;
+function pushToCloud(){
+  saveLocalTrades(trades);
+  saveLocalSettings(settings);
+  if(!CLOUD_ENABLED || !currentUser) return;
+  setSyncStatus('Saving…');
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(async ()=>{
+    const {error} = await sbClient.from('journal_data').upsert({
+      user_id: currentUser.id, trades, settings, updated_at: new Date().toISOString()
+    });
+    setSyncStatus(error ? 'Sync failed — saved locally' : 'Synced', !!error);
+  }, 500);
+}
+function saveTrades(t){ trades = t; pushToCloud(); }
+function saveSettings(s){ settings = s; pushToCloud(); }
+
+async function pullFromCloud(){
+  if(!CLOUD_ENABLED || !currentUser) return;
+  setSyncStatus('Loading…');
+  const {data, error} = await sbClient.from('journal_data').select('*').eq('user_id', currentUser.id).maybeSingle();
+  if(error){ setSyncStatus('Could not load cloud data — showing local copy', true); return; }
+  if(!data){
+    // first login: seed the cloud row with whatever's in the local cache
+    await sbClient.from('journal_data').insert({ user_id: currentUser.id, trades, settings });
+    setSyncStatus('Synced');
+    return;
+  }
+  trades = data.trades || [];
+  settings = {...DEFAULT_SETTINGS, ...(data.settings||{})};
+  saveLocalTrades(trades); saveLocalSettings(settings);
+  setSyncStatus('Synced');
+}
 
 function uid(){ return 't_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 
@@ -835,6 +876,95 @@ document.getElementById('wipeData').addEventListener('click', ()=>{
 });
 
 /* =========================================================
+   AUTH
+   ========================================================= */
+let authMode = 'login'; // 'login' | 'signup'
+
+function showApp(){
+  document.getElementById('authOverlay').classList.add('hidden');
+  document.getElementById('appRoot').classList.remove('hidden');
+  showView('dashboard');
+}
+function showAuth(){
+  document.getElementById('appRoot').classList.add('hidden');
+  document.getElementById('authOverlay').classList.remove('hidden');
+}
+function setAuthError(msg){
+  const el = document.getElementById('authError');
+  el.textContent = msg || '';
+  el.classList.toggle('hidden', !msg);
+}
+
+if(document.getElementById('authSwitchBtn')){
+  document.getElementById('authSwitchBtn').addEventListener('click', ()=>{
+    authMode = authMode === 'login' ? 'signup' : 'login';
+    document.getElementById('authTitle').textContent = authMode === 'login' ? 'Log in' : 'Create your account';
+    document.getElementById('authSubmit').textContent = authMode === 'login' ? 'Log in' : 'Sign up';
+    document.getElementById('authSwitchText').textContent = authMode === 'login' ? "Don't have an account?" : 'Already have an account?';
+    document.getElementById('authSwitchBtn').textContent = authMode === 'login' ? 'Sign up' : 'Log in';
+    setAuthError('');
+  });
+
+  document.getElementById('authForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    setAuthError('');
+    const email = document.getElementById('authEmail').value.trim();
+    const password = document.getElementById('authPassword').value;
+    const submitBtn = document.getElementById('authSubmit');
+    submitBtn.textContent = 'Please wait…'; submitBtn.disabled = true;
+
+    let result;
+    if(authMode === 'login'){
+      result = await sbClient.auth.signInWithPassword({email, password});
+    } else {
+      result = await sbClient.auth.signUp({email, password});
+    }
+    submitBtn.disabled = false;
+    submitBtn.textContent = authMode === 'login' ? 'Log in' : 'Sign up';
+
+    if(result.error){
+      setAuthError(result.error.message);
+      return;
+    }
+    if(authMode === 'signup' && !result.data.session){
+      setAuthError('Check your email to confirm your account, then log in.');
+      authMode = 'login';
+      document.getElementById('authTitle').textContent = 'Log in';
+      document.getElementById('authSubmit').textContent = 'Log in';
+      return;
+    }
+    currentUser = result.data.user;
+    await pullFromCloud();
+    showApp();
+  });
+
+  document.getElementById('signOutBtn').addEventListener('click', async ()=>{
+    if(CLOUD_ENABLED) await sbClient.auth.signOut();
+    currentUser = null;
+    showAuth();
+  });
+}
+
+/* =========================================================
    INIT
    ========================================================= */
-showView('dashboard');
+async function init(){
+  if(!CLOUD_ENABLED){
+    // No Supabase configured — run in local-only mode, same as before.
+    document.getElementById('authOverlay').classList.add('hidden');
+    document.getElementById('appRoot').classList.remove('hidden');
+    document.getElementById('signOutBtn').classList.add('hidden');
+    setSyncStatus('Local only — add config.js keys to enable sync');
+    showView('dashboard');
+    return;
+  }
+  const {data:{session}} = await sbClient.auth.getSession();
+  if(session){
+    currentUser = session.user;
+    await pullFromCloud();
+    showApp();
+  } else {
+    showAuth();
+  }
+}
+init();
