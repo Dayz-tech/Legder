@@ -252,7 +252,11 @@
 
       <div class="panel">
         <h3>Import a file</h3>
-        <p class="panel-note">Accepts MT5 CSV export or the JSON produced by the bridge script.</p>
+        <p class="panel-note">Accepts MT5 CSV export, MT5 statement PDF, or the JSON produced by the bridge script.</p>
+        <label class="cent-toggle">
+          <input type="checkbox" id="centAccountToggle">
+          This is a <strong>Cent account</strong> — divide imported $ amounts by 100
+        </label>
         <div class="dropzone" id="dropzone">
           <p>Drop a .csv, .json, or MT5 statement .pdf here, or</p>
           <label class="btn-secondary file-btn">Choose file<input type="file" id="fileInput" accept=".csv,.json,.pdf" hidden></label>

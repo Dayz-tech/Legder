@@ -651,7 +651,7 @@ function findCol(header, candidates){
   }
   return -1;
 }
-function importCSV(text){
+function importCSV(text, divisor=1){
   const {header, rows} = parseCSV(text);
   const col = {
     symbol: findCol(header, ['symbol','pair']),
@@ -696,7 +696,7 @@ function importCSV(text){
       entry: col.priceOpen>-1 ? r[col.priceOpen] : '',
       exit: col.priceClose>-1 ? r[col.priceClose] : '',
       sl: col.sl>-1 ? r[col.sl] : '', tp: col.tp>-1 ? r[col.tp] : '',
-      result: profit || 0, rr:'', strategy:'',
+      result: (profit || 0) / divisor, rr:'', strategy:'',
       emotion:'', confidence:'', sleep:'', stress:'', followedPlan:'', mistake:'', reason:'Imported from MT5 CSV'
     });
     imported++;
@@ -788,7 +788,7 @@ function parsePdfTradeLines(lines){
   });
   return results;
 }
-async function importPDF(arrayBuffer){
+async function importPDF(arrayBuffer, divisor=1){
   let lines;
   try{ lines = await extractPdfLines(arrayBuffer); }
   catch(e){ return {imported:0, error:'Could not read this PDF — it may be a scanned image rather than a text-based statement.'}; }
@@ -800,7 +800,7 @@ async function importPDF(arrayBuffer){
     trades.push({
       id: uid(), pair: r.pair, direction: r.direction, date: r.date, timeIn: r.timeIn||'', timeOut: r.timeOut||'',
       session:'', lots: r.lots||'', entry: r.entry||'', exit: r.exit||'', sl: r.sl||'', tp: r.tp||'',
-      result: r.result, rr:'', strategy:'',
+      result: r.result / divisor, rr:'', strategy:'',
       emotion:'', confidence:'', sleep:'', stress:'', followedPlan:'', mistake:'', reason:'Imported from MT5 PDF statement'
     });
   });
@@ -810,16 +810,17 @@ async function importPDF(arrayBuffer){
 
 function handleImportFile(file){
   const name = file.name.toLowerCase();
+  const divisor = document.getElementById('centAccountToggle').checked ? 100 : 1;
   if(name.endsWith('.pdf')){
     const reader = new FileReader();
     reader.onload = async ()=>{
       const summary = document.getElementById('importSummary');
       summary.innerHTML = `<p class="panel-note">Reading PDF…</p>`;
-      const res = await importPDF(reader.result);
+      const res = await importPDF(reader.result, divisor);
       if(res.error){
         summary.innerHTML = `<p class="neg">${res.error}</p>`;
       } else {
-        summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'} from the PDF. Double-check them under Trades — PDF parsing is best-effort, so it's worth a quick scan for anything off.</p>`;
+        summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'} from the PDF${divisor>1?' (converted from cents)':''}. Double-check them under Trades — PDF parsing is best-effort, so it's worth a quick scan for anything off.</p>`;
         refreshCurrentView();
       }
     };
@@ -830,20 +831,20 @@ function handleImportFile(file){
   reader.onload = ()=>{
     const text = reader.result;
     let res;
-    if(name.endsWith('.json')) res = importJSON(text);
-    else res = importCSV(text);
+    if(name.endsWith('.json')) res = importJSON(text, divisor);
+    else res = importCSV(text, divisor);
     const summary = document.getElementById('importSummary');
     if(res.error){
       summary.innerHTML = `<p class="neg">${res.error}</p>`;
     } else {
-      summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'}. Head to Trades or Calendar to see them.</p>`;
+      summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'}${divisor>1?' (converted from cents)':''}. Head to Trades or Calendar to see them.</p>`;
       refreshCurrentView();
     }
   };
   reader.readAsText(file);
 }
 
-function importJSON(text){
+function importJSON(text, divisor=1){
   let data;
   try{ data = JSON.parse(text); }catch(e){ return {imported:0, error:'Invalid JSON file.'}; }
   const list = Array.isArray(data) ? data : (data.trades || []);
@@ -858,7 +859,7 @@ function importJSON(text){
       session: item.session || '', lots: item.lots || item.volume || '',
       entry: item.entry || item.priceOpen || '', exit: item.exit || item.priceClose || '',
       sl: item.sl || '', tp: item.tp || '',
-      result: Number(item.result ?? item.profit ?? 0), rr: item.rr || '',
+      result: Number(item.result ?? item.profit ?? 0) / divisor, rr: item.rr || '',
       strategy: item.strategy || '', emotion: item.emotion || '', confidence: item.confidence || '',
       sleep: item.sleep || '', stress: item.stress || '', followedPlan: item.followedPlan || '',
       mistake: item.mistake || '', reason: item.reason || item.notes || ''
