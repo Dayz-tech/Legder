@@ -712,6 +712,111 @@ function normalizeDate(d){
   if(m2) return `${m2[3]}-${m2[2]}-${m2[1]}`;
   return d;
 }
+
+/* ---- PDF import (best-effort: reads the text layer of an MT5 statement PDF) ---- */
+if(typeof pdfjsLib !== 'undefined'){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+async function extractPdfLines(arrayBuffer){
+  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+  const lines = [];
+  for(let p=1; p<=pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const rows = {};
+    content.items.forEach(item=>{
+      const y = Math.round(item.transform[5]);
+      if(!rows[y]) rows[y] = [];
+      rows[y].push({x: item.transform[4], str: item.str});
+    });
+    Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>{
+      const line = rows[y].sort((a,b)=>a.x-b.x).map(i=>i.str).join(' ').replace(/\s+/g,' ').trim();
+      if(line) lines.push(line);
+    });
+  }
+  return lines;
+}
+function parsePdfTradeLines(lines){
+  const dateRe = /(\d{4})[.\-\/](\d{2})[.\-\/](\d{2})/;
+  const timeRe = /(\d{2}):(\d{2})(?::\d{2})?/;
+  const dirRe = /\b(buy|sell)\b/i;
+  // MT5 symbols are usually 5-8 uppercase letters, sometimes with digits/suffixes
+  const symRe = /\b([A-Z]{5,8}[A-Z0-9.]{0,4})\b/;
+  const found = [];
+  lines.forEach(line=>{
+    if(!dirRe.test(line)) return;
+    const dm = line.match(dateRe);
+    if(!dm) return;
+    const tm = line.match(timeRe);
+    const sm = line.match(symRe);
+    if(!sm) return;
+    const nums = (line.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+    if(nums.length < 3) return;
+    const profit = nums[nums.length-1];
+    found.push({
+      date: `${dm[1]}-${dm[2]}-${dm[3]}`,
+      timeIn: tm ? `${tm[1]}:${tm[2]}` : '',
+      pair: sm[1],
+      direction: dirRe.exec(line)[1].toLowerCase()==='sell' ? 'short' : 'long',
+      result: isNaN(profit) ? 0 : profit
+    });
+  });
+  return found;
+}
+async function importPDF(arrayBuffer){
+  let lines;
+  try{ lines = await extractPdfLines(arrayBuffer); }
+  catch(e){ return {imported:0, error:'Could not read this PDF — it may be a scanned image rather than a text-based statement.'}; }
+  const rows = parsePdfTradeLines(lines);
+  if(!rows.length){
+    return {imported:0, error:"Couldn't find recognizable trade rows in this PDF. MT5 statement layouts vary by broker, so this is best-effort — if it keeps failing, try exporting as CSV or HTML from MT5's Account History tab instead, which parses more reliably."};
+  }
+  rows.forEach(r=>{
+    trades.push({
+      id: uid(), pair: r.pair, direction: r.direction, date: r.date, timeIn: r.timeIn, timeOut:'',
+      session:'', lots:'', entry:'', exit:'', sl:'', tp:'', result: r.result, rr:'', strategy:'',
+      emotion:'', confidence:'', sleep:'', stress:'', followedPlan:'', mistake:'', reason:'Imported from MT5 PDF statement'
+    });
+  });
+  saveTrades(trades);
+  return {imported: rows.length};
+}
+
+function handleImportFile(file){
+  const name = file.name.toLowerCase();
+  if(name.endsWith('.pdf')){
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      const summary = document.getElementById('importSummary');
+      summary.innerHTML = `<p class="panel-note">Reading PDF…</p>`;
+      const res = await importPDF(reader.result);
+      if(res.error){
+        summary.innerHTML = `<p class="neg">${res.error}</p>`;
+      } else {
+        summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'} from the PDF. Double-check them under Trades — PDF parsing is best-effort, so it's worth a quick scan for anything off.</p>`;
+        refreshCurrentView();
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    const text = reader.result;
+    let res;
+    if(name.endsWith('.json')) res = importJSON(text);
+    else res = importCSV(text);
+    const summary = document.getElementById('importSummary');
+    if(res.error){
+      summary.innerHTML = `<p class="neg">${res.error}</p>`;
+    } else {
+      summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'}. Head to Trades or Calendar to see them.</p>`;
+      refreshCurrentView();
+    }
+  };
+  reader.readAsText(file);
+}
+
 function importJSON(text){
   let data;
   try{ data = JSON.parse(text); }catch(e){ return {imported:0, error:'Invalid JSON file.'}; }
@@ -737,23 +842,7 @@ function importJSON(text){
   saveTrades(trades);
   return {imported};
 }
-function handleImportFile(file){
-  const reader = new FileReader();
-  reader.onload = ()=>{
-    const text = reader.result;
-    let res;
-    if(file.name.toLowerCase().endsWith('.json')) res = importJSON(text);
-    else res = importCSV(text);
-    const summary = document.getElementById('importSummary');
-    if(res.error){
-      summary.innerHTML = `<p class="neg">${res.error}</p>`;
-    } else {
-      summary.innerHTML = `<p class="pos">Imported ${res.imported} trade${res.imported===1?'':'s'}. Head to Trades or Calendar to see them.</p>`;
-      refreshCurrentView();
-    }
-  };
-  reader.readAsText(file);
-}
+
 document.getElementById('fileInput').addEventListener('change', (e)=>{
   if(e.target.files[0]) handleImportFile(e.target.files[0]);
 });
