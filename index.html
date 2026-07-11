@@ -244,7 +244,7 @@
         <h3>About connecting MetaTrader 5</h3>
         <p>A web page running in your browser can't reach into a desktop MT5 terminal directly — MT5 doesn't expose that connection to browsers, for the same reason no trading platform lets a random webpage read your account. There are two ways around that, both supported here:</p>
         <ol>
-          <li><strong>Export &amp; import (works now):</strong> in MT5, go to the <em>Account History</em> tab, right-click → <em>Report</em> → save as a detailed CSV, then drop it below.</li>
+          <li><strong>Export &amp; import (works now):</strong> in MT5, go to the <em>Account History</em> tab, right-click → <em>Report</em> → save as a detailed statement (CSV, HTML, or PDF all work), then drop it below.</li>
           <li><strong>Local bridge script (closest to live sync):</strong> a small Python script using MetaTrader5's official API can export your trade history straight from your terminal. Download it below, run it locally with <code>python mt5_export.py</code>, and import the JSON it produces. It never leaves your machine.</li>
         </ol>
         <button class="btn-secondary" id="downloadBridge">Download mt5_export.py</button>
@@ -254,8 +254,8 @@
         <h3>Import a file</h3>
         <p class="panel-note">Accepts MT5 CSV export or the JSON produced by the bridge script.</p>
         <div class="dropzone" id="dropzone">
-          <p>Drop a .csv or .json file here, or</p>
-          <label class="btn-secondary file-btn">Choose file<input type="file" id="fileInput" accept=".csv,.json" hidden></label>
+          <p>Drop a .csv, .json, or MT5 statement .pdf here, or</p>
+          <label class="btn-secondary file-btn">Choose file<input type="file" id="fileInput" accept=".csv,.json,.pdf" hidden></label>
         </div>
         <div id="importSummary"></div>
       </div>
@@ -374,6 +374,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
